@@ -64,8 +64,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .mapwrap.is-dragging{cursor:grabbing}
 .stage{position:absolute;top:0;left:0;width:4600px;height:2600px;transform-origin:0 0;will-change:transform}
 .stage > svg{display:block;width:4600px;height:2600px}
-/* big landmasses get no edge of their own — they bleed into the paper */
-.softedge{filter:blur(30px)}
 
 /* paper grain + haze so the drawing dissolves instead of ending */
 .haze{
@@ -73,8 +71,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   background:
     radial-gradient(118% 92% at 50% 48%, rgba(234,220,192,0) 54%, rgba(234,220,192,.72) 88%, rgba(234,220,192,.95) 100%);
 }
+/* Laid over the paper rather than multiplied into it: blending a full screen
+   costs a pass on every frame, and at this strength it does not show. */
 .grain{
-  position:fixed;inset:0;z-index:6;pointer-events:none;opacity:.42;mix-blend-mode:multiply;
+  position:fixed;inset:0;z-index:6;pointer-events:none;opacity:.32;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/><feColorMatrix type='saturate' values='0'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='.2'/></svg>");
 }
 
@@ -532,9 +532,17 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
           <stop offset=".62" stop-color="#C9AE7E" stop-opacity=".55"/>
           <stop offset="1" stop-color="#C9AE7E" stop-opacity="0"/>
         </radialGradient>
-        <linearGradient id="park" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#8FA860"/><stop offset="1" stop-color="#6F8C3E"/>
-        </linearGradient>
+        <!-- The park runs out before it reaches its own outline, so the outline is
+             never drawn and no blur is needed to hide it. Centre sits in the
+             north-east corner, where the park is deepest. -->
+        <radialGradient id="park" cx="1" cy="0" r="1">
+          <stop offset="0" stop-color="#8FA860"/>
+          <stop offset=".55" stop-color="#8AA45E"/>
+          <stop offset=".8" stop-color="#7C9748" stop-opacity=".96"/>
+          <stop offset=".91" stop-color="#6F8C3E" stop-opacity=".6"/>
+          <stop offset=".975" stop-color="#6F8C3E" stop-opacity=".16"/>
+          <stop offset="1" stop-color="#6F8C3E" stop-opacity="0"/>
+        </radialGradient>
         <!-- one machiya roof, reused a few hundred times -->
         <g id="roof">
           <path d="M0 0 L34 0 L40 9 L-6 9 Z" fill="#B99A6B"/>
@@ -588,7 +596,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
       </defs>
 
       <rect width="4600" height="2600" fill="#EADCC0"/>
-      <g id="g-park" class="softedge"></g>
+      <g id="g-park"></g>
       <g id="g-far"></g>
       <g id="g-zone"></g>
       <g id="g-street"></g>
@@ -838,20 +846,63 @@ var gFar = document.getElementById("g-far"), gZone = document.getElementById("g-
   function streamX(yy){ return 820 + 190 * Math.sin(yy / 900) - yy * .06; }
   function nearStream(xx, yy){ return Math.abs(xx - streamX(yy)) < 135; }
 
-  /* --- paddy, where the town runs out --- */
-  for (i2 = 0; i2 < 24; i2++){
-    x2 = rnd() * 4600; y2 = rnd() * 2600;
-    if (Math.abs(x2 - cx(y2)) < 1680 || nearStream(x2, y2)) continue;
-    var fw = 180 + rnd() * 200, fh = 92 + rnd() * 84;
-    var gf = el("g", { transform:"translate(" + x2.toFixed(0) + "," + y2.toFixed(0) + ") rotate(" +
-      ((rnd() - .5) * 11).toFixed(1) + ")", opacity:".3" });
-    gf.appendChild(el("rect", { x:0, y:0, width:fw, height:fh, fill:"#BFC896", stroke:"#9AA877", "stroke-width":2 }));
-    for (var q = 1; q < 5; q++){
-      gf.appendChild(el("line", { x1:5, y1:fh * q / 5, x2:fw - 5, y2:fh * q / 5,
-        stroke:"#9AA877", "stroke-width":1.6, opacity:".7" }));
+  /* ---------------------------------------------------------------
+     Stamping in bulk.
+     Several hundred roofs and trees, each drawn on its own, is several
+     hundred things for the browser to redraw every time the map moves.
+     They are identical apart from where they sit and how faint they are,
+     so they are collected by fadedness and drawn as a few long paths.
+     --------------------------------------------------------------- */
+  var BATCH = {};
+  function stamp(kind, x, y, s, o){
+    var step = .07, q = Math.round(o / step) * step;
+    var key = kind + "|" + q.toFixed(2);
+    var b = BATCH[key] || (BATCH[key] = { kind:kind, o:q, d:["", "", ""] });
+    var X = function(n){ return (x + n * s).toFixed(1); },
+        Y = function(n){ return (y + n * s).toFixed(1); },
+        R = function(n){ return (n * s).toFixed(1); };
+    if (kind === "roof"){
+      b.d[0] += "M" + X(0) + " " + Y(0) + "L" + X(34) + " " + Y(0) + "L" + X(40) + " " + Y(9) + "L" + X(-6) + " " + Y(9) + "Z";
+      b.d[1] += "M" + X(-6) + " " + Y(9) + "L" + X(40) + " " + Y(9) + "L" + X(40) + " " + Y(12) + "L" + X(-6) + " " + Y(12) + "Z";
+      b.d[2] += "M" + X(1) + " " + Y(12) + "L" + X(33) + " " + Y(12) + "L" + X(33) + " " + Y(25) + "L" + X(1) + " " + Y(25) + "Z";
+    } else {
+      b.d[0] += "M" + X(0) + " " + Y(6) + "q" + R(-9) + " " + R(-2) + " " + R(-9) + " " + R(-9) +
+                "q0 " + R(-8) + " " + R(9) + " " + R(-8) + "q" + R(9) + " 0 " + R(9) + " " + R(8) +
+                "q0 " + R(7) + " " + R(-9) + " " + R(9) + "Z";
+      b.d[1] += "M" + X(-1) + " " + Y(6) + "l0 " + R(7) + "l" + R(2) + " 0l0 " + R(-7) + "Z";
     }
-    gFar.appendChild(gf);
   }
+  var PAINT = { roof:{ fill:["#B99A6B", "#8A3520", "#E0CCA6"], a:[1, .5, 1] },
+                tree:{ fill:["#6F8C3E", "#6B573C"], a:[1, 1] } };
+  function flush(kind){
+    var p = PAINT[kind];
+    Object.keys(BATCH).forEach(function(k){
+      var b = BATCH[k];
+      if (b.kind !== kind) return;
+      b.d.forEach(function(d, i){
+        if (d) gFar.appendChild(el("path", { d:d, fill:p.fill[i], opacity:(b.o * p.a[i]).toFixed(3) }));
+      });
+      delete BATCH[k];
+    });
+  }
+
+  /* --- paddy, where the town runs out: every plot in two paths --- */
+  (function paddy(){
+    var plots = "", furrows = "", q2;
+    for (var i = 0; i < 24; i++){
+      var px = rnd() * 4600, py = rnd() * 2600;
+      if (Math.abs(px - cx(py)) < 1680 || nearStream(px, py)) continue;
+      var fw = 180 + rnd() * 200, fh = 92 + rnd() * 84, a = (rnd() - .5) * .192;
+      var ca = Math.cos(a), sa = Math.sin(a);
+      var P = function(ux, uy){ return (px + ux * ca - uy * sa).toFixed(1) + " " + (py + ux * sa + uy * ca).toFixed(1); };
+      plots += "M" + P(0, 0) + "L" + P(fw, 0) + "L" + P(fw, fh) + "L" + P(0, fh) + "Z";
+      for (q2 = 1; q2 < 5; q2++) furrows += "M" + P(5, fh * q2 / 5) + "L" + P(fw - 5, fh * q2 / 5);
+    }
+    if (plots){
+      gFar.appendChild(el("path", { d:plots, fill:"#BFC896", stroke:"#9AA877", "stroke-width":2, opacity:".3" }));
+      gFar.appendChild(el("path", { d:furrows, stroke:"#9AA877", "stroke-width":1.6, fill:"none", opacity:".21" }));
+    }
+  })();
 
   /* --- the lanes. Nara is a grid; near the arcade the grid bends to follow it. --- */
   function lane(d, w, o){
@@ -898,12 +949,11 @@ var gFar = document.getElementById("g-far"), gZone = document.getElementById("g-
     var off2 = 355 + Math.pow(rnd(), .6) * 2000;
     x2 = cx(y2) + side * off2;
     if (x2 < -80 || x2 > 4680 || nearStream(x2, y2) || inTemple(x2, y2, 120)) continue;
-    var fade = Math.max(.15, .66 - off2 / 3100).toFixed(2);
-    var n2 = 2 + Math.floor(rnd() * 4), step = 43 + rnd() * 11, sc = .8 + rnd() * .5;
-    for (var k2 = 0; k2 < n2; k2++){
-      gFar.appendChild(use("#roof", x2 + k2 * step, y2, sc, 0, fade));
-    }
+    var fade = Math.max(.15, .66 - off2 / 3100);
+    var n2 = 2 + Math.floor(rnd() * 4), gap = 43 + rnd() * 11, sc = .8 + rnd() * .5;
+    for (var k2 = 0; k2 < n2; k2++) stamp("roof", x2 + k2 * gap, y2, sc, fade);
   }
+  flush("roof");
 
   /* --- the water, drawn over the town the way a river is on an old sheet --- */
   (function(){
@@ -947,8 +997,9 @@ var gFar = document.getElementById("g-far"), gZone = document.getElementById("g-
   for (i2 = 0; i2 < 120; i2++){
     x2 = rnd() * 4600; y2 = rnd() * 2600;
     if (Math.abs(x2 - cx(y2)) < 400) continue;
-    gFar.appendChild(use("#tree", x2, y2, 1 + rnd() * 1.9, 0, (.3 + rnd() * .45).toFixed(2)));
+    stamp("tree", x2, y2, 1 + rnd() * 1.9, .3 + rnd() * .45);
   }
+  flush("tree");
 
   /* --- deer, in the park where they actually are --- */
   for (i2 = 0; i2 < 9; i2++){
@@ -1632,6 +1683,9 @@ function setP(v){
     document.getElementById("routebtn").classList.add("is-in");
     document.getElementById("tools").classList.add("is-in");
     setCaption("92 shops, one covered street", "Tap a marker to walk into it");
+    /* You only walk under the noren once. Take the cover out of the page
+       rather than leave 280 hidden elements behind the map. */
+    setTimeout(function(){ if (gate.parentNode) gate.parentNode.removeChild(gate); }, 500);
   }
 }
 function glideTo(target, ms){
