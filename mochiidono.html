@@ -57,9 +57,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   overflow:hidden;
   background:var(--kinari);
   touch-action:none;cursor:grab;
-  transform:scale(calc(1.14 - .14 * var(--p)));
   transform-origin:50% 42%;
-  opacity:calc(.25 + .75 * var(--p));
+  /* scale and opacity are set straight onto this element while you walk under
+     the noren. Reading them from a variable on <html> would mean restyling
+     every part of the map on every frame of the cover. */
 }
 .mapwrap.is-dragging{cursor:grabbing}
 .stage{position:absolute;top:0;left:0;width:4600px;height:2600px;transform-origin:0 0;will-change:transform}
@@ -421,7 +422,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   width:min(86vw,360px);
   transform:translateX(-50%) scale(calc(1 + var(--p) * 2.1)) translateY(calc(var(--p) * -6%));
   transform-origin:50% 0;
-  filter:blur(calc(var(--p) * var(--p) * 7px));
 }
 .noren__bar{height:12px;border-radius:6px;background:linear-gradient(180deg,#6A5236,#2E2217);
   box-shadow:0 4px 12px rgba(0,0,0,.6)}
@@ -510,7 +510,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 </head>
 <body>
 
-<div class="mapwrap" id="mapwrap">
+<div class="mapwrap" id="mapwrap" style="transform:scale(1.14);opacity:.25">
   <div class="stage" id="stage">
     <svg id="map" viewBox="0 0 4600 2600" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
@@ -1178,7 +1178,9 @@ function vh(){ return wrap.clientHeight; }
 function coverScale(){ return Math.max(vw() / W, vh() / H); }
 function apply(){
   stage.style.transform = "translate(" + T.x.toFixed(2) + "px," + T.y.toFixed(2) + "px) scale(" + T.s.toFixed(4) + ")";
-  wrap.style.setProperty("--inv", (1 / T.s).toFixed(4));
+  /* Only the pins read this. Setting it on the whole map would restyle
+     every part of the drawing on every frame of a pinch. */
+  (layer || wrap).style.setProperty("--inv", (1 / T.s).toFixed(4));
 }
 /* How far back you are allowed to stand.
    Pulling back past the framed street only buys empty district, so the
@@ -1676,13 +1678,17 @@ function toast(msg){
 var gate = document.getElementById("gate"), gp = 0, done = false, raf = null;
 function setP(v){
   gp = Math.max(0, Math.min(1, v));
-  document.documentElement.style.setProperty("--p", gp.toFixed(4));
+  /* the cover restyles only itself; the map is moved directly */
+  gate.style.setProperty("--p", gp.toFixed(4));
+  wrap.style.transform = "scale(" + (1.14 - .14 * gp).toFixed(4) + ")";
+  wrap.style.opacity = (.25 + .75 * gp).toFixed(3);
   if (gp >= 1 && !done){
     done = true;
     gate.classList.add("is-done");
     document.getElementById("routebtn").classList.add("is-in");
     document.getElementById("tools").classList.add("is-in");
     setCaption("92 shops, one covered street", "Tap a marker to walk into it");
+    wrap.style.transform = ""; wrap.style.opacity = "";
     /* You only walk under the noren once. Take the cover out of the page
        rather than leave 280 hidden elements behind the map. */
     setTimeout(function(){ if (gate.parentNode) gate.parentNode.removeChild(gate); }, 500);
